@@ -56,6 +56,81 @@ class ConsumerTestWithCorrectProccess < Minitest::Test
   end
 end
 
+class ConsumerTestWithCorrectQueueOptsProccess < Minitest::Test
+  class SimpleConsumer
+    include BunnySubscriber::Consumer
+
+    queue name: 'some.queue',
+          durable: false,
+          exclusive: true,
+          auto_delete: false,
+          arguments: {
+            'x-dead-letter-exchange': 'dl.exchange'
+          }
+
+    def process_event(msg)
+      # Do some work
+    end
+  end
+
+  def setup
+    @connection = BunnyMock.new
+    @connection.start
+    @channel = @connection.create_channel
+
+    @consumer = SimpleConsumer.new(
+      @channel,
+      Logger.new(STDOUT, level: Logger::FATAL)
+    )
+    @consumer.start
+  end
+
+  def test_that_create_queue_after_start
+    assert_equal(
+      true,
+      @connection.queue_exists?('some.queue')
+    )
+  end
+
+  def test_that_calls_process_event_on_subscribe
+    msg = 'some message'
+    mocked_method = MiniTest::Mock.new
+    mocked_method.expect :call, {}, [msg]
+
+    @consumer.stub :process_event, mocked_method do
+      @channel.queue('some.queue').publish(msg)
+    end
+
+    mocked_method.verify
+  end
+
+  def test_that_process_event_trigger_auto_ack
+    msg = 'test acknowledgment'
+
+    @channel.queue('some.queue').publish(msg)
+    delivery_tag = @channel.acknowledged_state[:acked].keys.first
+
+    assert_equal(
+      msg,
+      @channel.acknowledged_state[:acked][delivery_tag].last,
+    )
+  end
+
+  def test_that_options_were_used_to_create_queue
+    assert_equal(
+      {
+        durable: false,
+        exclusive: true,
+        auto_delete: false,
+        arguments: {
+          'x-dead-letter-exchange': 'dl.exchange'
+        }
+      },
+      @channel.queue('some.queue').opts
+    )
+  end
+end
+
 class ConsumerTestWithErrorProccess < Minitest::Test
   class ConsumerWithError
     include BunnySubscriber::Consumer
